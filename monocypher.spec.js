@@ -2,7 +2,7 @@ const { expect } = require('chai');
 const { randomBytes } = require('crypto');
 const { readFileSync } = require('fs');
 const { gunzipSync } = require('zlib');
-const { Monocypher } = require('.');
+const mc = require('.');
 
 const vectors = JSON.parse(gunzipSync(readFileSync(`${__dirname}/test-vectors.json.gz`)).toString('utf8'));
 
@@ -24,6 +24,10 @@ class VectorReader {
 
 describe('Monocypher WASM Port', function () {
 
+  before(async function () {
+    await mc.ready;
+  });
+
   ////////////////////////////
   /// Tests aginst vectors ///
   ////////////////////////////
@@ -32,8 +36,7 @@ describe('Monocypher WASM Port', function () {
   
   // ietf_chacha20 skipped because counter functions are not implemented
 
-  it("hchacha20", async function () {
-    const mc = await Monocypher;
+  it("hchacha20", function () {
     const reader = new VectorReader(vectors.hchacha20);
     while (!reader.done) {
       const key   = reader.next();
@@ -45,8 +48,7 @@ describe('Monocypher WASM Port', function () {
 
   // xchacha20 skipped because counter functions are not implemented
 
-  it("poly1305", async function () {
-    const mc = await Monocypher;
+  it("poly1305", function () {
     const reader = new VectorReader(vectors.poly1305);
     while (!reader.done) {
       const key = reader.next();
@@ -56,8 +58,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("aead_ietf", async function () {
-    const mc = await Monocypher;
+  it("aead_ietf", function () {
     const reader = new VectorReader(vectors.aead_ietf);
     while (!reader.done) {
       const key   = reader.next();
@@ -69,8 +70,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("blake2b", async function () {
-    const mc = await Monocypher;
+  it("blake2b", function () {
     const reader = new VectorReader(vectors.blake2b);
     while (!reader.done) {
       const msg = reader.next();
@@ -80,8 +80,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("argon2i", async function () {
-    const mc = await Monocypher;
+  it("argon2i", function () {
     const reader = new VectorReader(vectors.argon2i);
     while (!reader.done) {
       const nb_blocks     = reader.next().readIntLE(0, 6);
@@ -95,8 +94,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("x25519", async function () {
-    const mc = await Monocypher;
+  it("x25519", function () {
     const reader = new VectorReader(vectors.x25519);
     while (!reader.done) {
       const scalar = reader.next();
@@ -106,8 +104,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("x25519_pk", async function () {
-    const mc = await Monocypher;
+  it("x25519_pk", function () {
     const reader = new VectorReader(vectors.x25519_pk);
     while (!reader.done) {
       const in_ = reader.next();
@@ -116,8 +113,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("key_exchange", async function () {
-    const mc = await Monocypher;
+  it("key_exchange", function () {
     const reader = new VectorReader(vectors.key_exchange);
     while (!reader.done) {
       const secret_key = reader.next();
@@ -127,8 +123,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("edDSA", async function () {
-    const mc = await Monocypher;
+  it("edDSA", function () {
     const reader = new VectorReader(vectors.edDSA);
     while (!reader.done) {
       const secret_k = reader.next();
@@ -142,8 +137,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("edDSA_pk", async function () {
-    const mc = await Monocypher;
+  it("edDSA_pk", function () {
     const reader = new VectorReader(vectors.edDSA_pk);
     while (!reader.done) {
       const in_ = reader.next();
@@ -152,8 +146,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("test_x25519", async function() {
-    const mc = await Monocypher;
+  it("test_x25519", function() {
 
     function iterate_x25519(k, u) {
       const tmp = mc.crypto_x25519(k, u);
@@ -185,8 +178,7 @@ describe('Monocypher WASM Port', function () {
     expect(k).to.deep.equal(_1k);
   });
 
-  it("elligator_dir", async function () {
-    const mc = await Monocypher;
+  it("elligator_dir", function () {
     const reader = new VectorReader(vectors.elligator_dir);
     while (!reader.done) {
       const in_ = reader.next();
@@ -195,8 +187,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("elligator_inv", async function () {
-    const mc = await Monocypher;
+  it("elligator_inv", function () {
     const reader = new VectorReader(vectors.elligator_inv);
     while (!reader.done) {
       const point   = reader.next();
@@ -240,16 +231,13 @@ describe('Monocypher WASM Port', function () {
     }
   }
 
-  it("p_verify16", async function () {
-    const mc = await Monocypher;
+  it("p_verify16", function () {
     p_verify(16, mc.crypto_verify16.bind(mc));
   });
-  it("p_verify32", async function () {
-    const mc = await Monocypher;
+  it("p_verify32", function () {
     p_verify(32, mc.crypto_verify32.bind(mc));
   });
-  it("p_verify64", async function () {
-    const mc = await Monocypher;
+  it("p_verify64", function () {
     p_verify(64, mc.crypto_verify64.bind(mc));
   });
 
@@ -269,8 +257,7 @@ describe('Monocypher WASM Port', function () {
 
   // p_blake2b_overlap skipped because pointers are managed by wrapper
 
-  it("p_argon2i_easy", async function () {
-    const mc = await Monocypher;
+  it("p_argon2i_easy", function () {
     const password = randomBytes(32);
     const salt = randomBytes(16);
     const hash_general = mc.crypto_argon2i_general(64, 8, 1, password, salt, null, null);
@@ -284,8 +271,7 @@ describe('Monocypher WASM Port', function () {
 
   // p_key_exchange_overlap skipped because pointers are managed by wrapper
 
-  it("p_eddsa_roundtrip", async function () {
-    const mc = await Monocypher;
+  it("p_eddsa_roundtrip", function () {
     const MESSAGE_SIZE = 30;
     for (let i = 0; i < MESSAGE_SIZE; i++) {
       const message = randomBytes(i);
@@ -306,8 +292,7 @@ describe('Monocypher WASM Port', function () {
   // Verifies that random signatures are all invalid.  Uses random
   // public keys to see what happens outside of the curve (it should
   // yield an invalid signature).
-  it("p_eddsa_random", async function () {
-    const mc = await Monocypher;
+  it("p_eddsa_random", function () {
     const MESSAGE_SIZE = 30;
     for (let i = 0; i < 100; i++) {
       const message = randomBytes(MESSAGE_SIZE);
@@ -333,8 +318,7 @@ describe('Monocypher WASM Port', function () {
 
   // p_eddsa_incremental skipped because incremental functions are not implemented
 
-  it("p_aead", async function () {
-    const mc = await Monocypher;
+  it("p_aead", function () {
     for (let i = 0; i < 1000; i++) {
       const key = randomBytes(32);
       const nonce = randomBytes(24);
@@ -366,8 +350,7 @@ describe('Monocypher WASM Port', function () {
   });
 
   // Elligator direct mapping must ignore the most significant bits
-  it("p_elligator_direct_msb", async function () {
-    const mc = await Monocypher;
+  it("p_elligator_direct_msb", function () {
     for (let i = 0; i < 20; i++) {
       const r = randomBytes(32);
       const r1 = r.slice(0, 32);  r1[31] = (r[31] & 0x3f) | 0x00;
@@ -386,8 +369,7 @@ describe('Monocypher WASM Port', function () {
 
   // p_elligator_inverse_overlap skipped because pointers are managed by wrapper
 
-  it("p_elligator_x25519", async function () {
-    const mc = await Monocypher;
+  it("p_elligator_x25519", function () {
     let i = 0;
     while (i < 64) {
       const sk1  = randomBytes(32);
@@ -433,8 +415,7 @@ describe('Monocypher WASM Port', function () {
     }
   });
 
-  it("p_elligator_key_pair", async function () {
-    const mc = await Monocypher;
+  it("p_elligator_key_pair", function () {
     for (let i = 0; i < 32; i++) {
       const seed = randomBytes(32);
       const sk2 = randomBytes(32);
@@ -449,8 +430,7 @@ describe('Monocypher WASM Port', function () {
 
   // p_elligator_key_pair_overlap skipped because pointers are managed by wrapper
 
-  it("p_x25519_inverse", async function () {
-    const mc = await Monocypher;
+  it("p_x25519_inverse", function () {
     const b = randomBytes(32);
     // random point (cofactor is cleared).
     const base = mc.crypto_x25519_public_key(b);
@@ -491,8 +471,7 @@ describe('Monocypher WASM Port', function () {
 
   // p_elligator_inverse_overlap skipped because pointers are managed by wrapper
 
-  it("p_from_eddsa", async function () {
-    const mc = await Monocypher;
+  it("p_from_eddsa", function () {
     for (let i = 0; i < 32; i++) {
       const ed_private = randomBytes(32);
       const ed_public = mc.crypto_sign_public_key   (ed_private);
