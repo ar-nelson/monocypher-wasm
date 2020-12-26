@@ -8,6 +8,7 @@ const vectors = JSON.parse(gunzipSync(readFileSync(`${__dirname}/test-vectors.js
 
 class VectorReader {
   constructor(vectors) {
+    expect(vectors).to.be.instanceof(Array);
     this.vectors = vectors;
     this.i = 0;
   }

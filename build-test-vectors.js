@@ -1,27 +1,15 @@
 const { readFileSync, writeFileSync } = require('fs');
 const { gzipSync } = require('zlib');
 
-const lines = readFileSync('vectors.h', { encoding: 'utf8' }).split('\n');
-const bindings = new Map();
+const regex = /static const char \*(\w+)_vectors\[\]=\{([^}]+)\}/mg;
+const src = readFileSync('vectors.h', { encoding: 'utf8' });
+const json = {};
 
-for (const line of lines) {
-  const match = /^static \w+ \*?(\w+)\[\]=\{([^}]+)\,}/.exec(line);
-  if (match) {
-    bindings.set(match[1], match[2].split(','));
-  }
+let match;
+while ((match = regex.exec(src)) != null) {
+  const [,name,vectorsString] = match;
+  const vectors = vectorsString.split(/[,\s]+/).filter(x => x.length).map(x => JSON.parse(x));
+  json[name] = vectors;
 }
-
-const json = [...bindings.keys()]
-  .map(k => /^(\w+)_vectors$/.exec(k))
-  .filter(k => k)
-  .map(([k,name]) => ({
-    name,
-    vectors: bindings.get(k)
-      .map((vecName, i) => {
-        const vec = bindings.get(vecName);
-        return vec ? Buffer.from(vec.map(x => +x)).toString('hex') : null;
-      })
-  }))
-  .reduce((obj, { name, vectors }) => ({ ...obj, [name]: vectors }), {});
 
 writeFileSync('test-vectors.json.gz', gzipSync(JSON.stringify(json), { level: 9 }));
