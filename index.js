@@ -235,7 +235,7 @@ function crypto_key_exchange(your_secret_key, their_public_key) {
   return out;
 }
 function crypto_key_exchange_public_key(your_secret_key) {
-  return crypto_sign_public_key(your_secret_key);
+  return crypto_x25519_public_key(your_secret_key);
 }
 
 function crypto_lock(key, nonce, plain_text) {
