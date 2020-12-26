@@ -39,9 +39,9 @@ declare function crypto_ietf_chacha20(plain_text: InputBuffer, key: InputBuffer,
 declare function crypto_key_exchange(your_secret_key: InputBuffer, their_public_key: InputBuffer): Uint8Array;
 declare function crypto_key_exchange_public_key(your_secret_key: InputBuffer): Uint8Array;
 
-declare function crypto_lock(key: InputBuffer, plain_text: InputBuffer): Uint8Array;
+declare function crypto_lock(key: InputBuffer, nonce: InputBuffer, plain_text: InputBuffer): Uint8Array;
 declare function crypto_unlock(key: InputBuffer, nonce: InputBuffer, cipher_text: InputBuffer): Uint8Array | null;
-declare function crypto_lock_aead(key: InputBuffer, ad: InputBuffer, plain_text: InputBuffer): Uint8Array;
+declare function crypto_lock_aead(key: InputBuffer, nonce: InputBuffer, ad: InputBuffer, plain_text: InputBuffer): Uint8Array;
 declare function crypto_unlock_aead(key: InputBuffer, nonce: InputBuffer, ad: InputBuffer, cipher_text: InputBuffer): Uint8Array | null;
 
 declare function crypto_poly1305(message: InputBuffer, key: InputBuffer): Uint8Array;
