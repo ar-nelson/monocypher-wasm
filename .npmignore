@@ -1,0 +1,6 @@
+*.c
+*.h
+*.spec.js
+test-vectors.json.gz
+yarn.lock
+build-test-vectors.js
