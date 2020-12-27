@@ -329,7 +329,7 @@ describe('Monocypher WASM Port', function () {
       let box = mc.crypto_lock_aead(key, nonce, ad, plaintext);
       let out = mc.crypto_unlock_aead(key, nonce, ad, box);
       expect(out).to.exist;
-      expect(out.subarray(16)).to.deep.equal(plaintext);
+      expect(out).to.deep.equal(plaintext);
       box[0]++;
       expect(mc.crypto_unlock_aead(key, nonce, ad, box)).to.be.null;
 
@@ -338,7 +338,7 @@ describe('Monocypher WASM Port', function () {
       box = mc.crypto_lock(key, nonce, plaintext);
       expect(out = mc.crypto_unlock(key, nonce, box)).to.exist;
       // Make sure decrypted text and original text are the same
-      expect(out.subarray(16)).to.deep.equal(plaintext);
+      expect(out).to.deep.equal(plaintext);
       // Make and reject forgery
       box[0]++;
       expect(mc.crypto_unlock(key, nonce, box)).to.be.null;

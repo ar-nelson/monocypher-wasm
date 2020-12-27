@@ -1,6 +1,6 @@
 {
   "name": "monocypher-wasm",
-  "version": "3.1.2-1",
+  "version": "3.1.2-2",
   "description": "WASM port of Monocypher (https://monocypher.org/)",
   "main": "index.js",
   "types": "index.d.ts",

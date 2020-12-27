@@ -271,7 +271,7 @@ function crypto_unlock(key, nonce, cipher_text) {
     ptr,
     ptr + MAC_BYTES, textLength
   ) === 0;
-  const out = success ? wasm.HEAPU8.slice(ptr, ptr + MAC_BYTES + textLength) : null;
+  const out = success ? wasm.HEAPU8.slice(ptr + MAC_BYTES, ptr + MAC_BYTES + textLength) : null;
   wasm._crypto_wipe(ptr + MAC_BYTES + textLength, KEY_BYTES);
   wasm._free(ptr);
   return out;
@@ -315,7 +315,7 @@ function crypto_unlock_aead(key, nonce, ad, cipher_text) {
     ad && (ptr + MAC_BYTES + textLength + KEY_BYTES + NONCE_BYTES), adLength,
     ptr + MAC_BYTES, textLength
   ) === 0;
-  const out = success ? wasm.HEAPU8.slice(ptr, ptr + MAC_BYTES + textLength) : null;
+  const out = success ? wasm.HEAPU8.slice(ptr + MAC_BYTES, ptr + MAC_BYTES + textLength) : null;
   wasm._crypto_wipe(ptr + MAC_BYTES + textLength, KEY_BYTES);
   wasm._free(ptr);
   return out;
