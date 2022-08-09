@@ -198,9 +198,29 @@ static void chacha20_init_key(u32 block[16], const u8 key[32])
     load32_le_buf(block+4, key                          , 8); // key
 }
 
-static u64 chacha20_core(u32 input[16], u8 *cipher_text, const u8 *plain_text,
-                         size_t text_size)
+void crypto_hchacha20(u8 out[32], const u8 key[32], const u8 in [16])
 {
+    u32 block[16];
+    chacha20_init_key(block, key);
+    // input
+    load32_le_buf(block + 12, in, 4);
+    chacha20_rounds(block, block);
+    // prevent reversal of the rounds by revealing only half of the buffer.
+    store32_le_buf(out   , block   , 4); // constant
+    store32_le_buf(out+16, block+12, 4); // counter and nonce
+    WIPE_BUFFER(block);
+}
+
+u64 crypto_chacha20_ctr(u8 *cipher_text, const u8 *plain_text,
+                        size_t text_size, const u8 key[32], const u8 nonce[8],
+                        u64 ctr)
+{
+    u32 input[16];
+    chacha20_init_key(input, key);
+    input[12] = (u32) ctr;
+    input[13] = (u32)(ctr >> 32);
+    load32_le_buf(input+14, nonce, 2);
+
     // Whole blocks
     u32    pool[16];
     size_t nb_blocks = text_size >> 6;
@@ -242,33 +262,9 @@ static u64 chacha20_core(u32 input[16], u8 *cipher_text, const u8 *plain_text,
         }
         WIPE_BUFFER(tmp);
     }
+    ctr = input[12] + ((u64)input[13] << 32) + (text_size > 0);
+
     WIPE_BUFFER(pool);
-    return input[12] + ((u64)input[13] << 32) + (text_size > 0);
-}
-
-void crypto_hchacha20(u8 out[32], const u8 key[32], const u8 in [16])
-{
-    u32 block[16];
-    chacha20_init_key(block, key);
-    // input
-    load32_le_buf(block + 12, in, 4);
-    chacha20_rounds(block, block);
-    // prevent reversal of the rounds by revealing only half of the buffer.
-    store32_le_buf(out   , block   , 4); // constant
-    store32_le_buf(out+16, block+12, 4); // counter and nonce
-    WIPE_BUFFER(block);
-}
-
-u64 crypto_chacha20_ctr(u8 *cipher_text, const u8 *plain_text,
-                        size_t text_size, const u8 key[32], const u8 nonce[8],
-                        u64 ctr)
-{
-    u32 input[16];
-    chacha20_init_key(input, key);
-    input[12] = (u32) ctr;
-    input[13] = (u32)(ctr >> 32);
-    load32_le_buf(input+14, nonce, 2);
-    ctr = chacha20_core(input, cipher_text, plain_text, text_size);
     WIPE_BUFFER(input);
     return ctr;
 }
@@ -277,13 +273,9 @@ u32 crypto_ietf_chacha20_ctr(u8 *cipher_text, const u8 *plain_text,
                              size_t text_size,
                              const u8 key[32], const u8 nonce[12], u32 ctr)
 {
-    u32 input[16];
-    chacha20_init_key(input, key);
-    input[12] = (u32) ctr;
-    load32_le_buf(input+13, nonce, 3);
-    ctr = (u32)chacha20_core(input, cipher_text, plain_text, text_size);
-    WIPE_BUFFER(input);
-    return ctr;
+    u64 big_ctr = ctr + ((u64)load32_le(nonce) << 32);
+    return (u32)crypto_chacha20_ctr(cipher_text, plain_text, text_size,
+                                    key, nonce + 4, big_ctr);
 }
 
 u64 crypto_xchacha20_ctr(u8 *cipher_text, const u8 *plain_text,
@@ -1667,73 +1659,114 @@ void crypto_x25519_public_key(u8       public_key[32],
 ///////////////////////////
 /// Arithmetic modulo L ///
 ///////////////////////////
-static const  u8 L[32] = {
-    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2,
-    0xde, 0xf9, 0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, };
+static const u32 L[8] = {0x5cf5d3ed, 0x5812631a, 0xa2f79cd6, 0x14def9de,
+                         0x00000000, 0x00000000, 0x00000000, 0x10000000,};
 
-// r = x mod L (little-endian)
-static void modL(u8 *r, i64 x[64])
+//  p = a*b + p
+static void multiply(u32 p[16], const u32 a[8], const u32 b[8])
 {
-    for (unsigned i = 63; i >= 32; i--) {
-        i64 carry = 0;
-        FOR (j, i-32, i-12) {
-            x[j] += carry - 16 * x[i] * L[j - (i - 32)];
-            carry = (x[j] + 128) >> 8;
-            x[j] -= carry * (1 << 8);
+    FOR (i, 0, 8) {
+        u64 carry = 0;
+        FOR (j, 0, 8) {
+            carry  += p[i+j] + (u64)a[i] * b[j];
+            p[i+j]  = (u32)carry;
+            carry >>= 32;
         }
-        x[i-12] += carry;
-        x[i] = 0;
-    }
-    i64 carry = 0;
-    FOR (i, 0, 32) {
-        x[i] += carry - (x[31] >> 4) * L[i];
-        carry = x[i] >> 8;
-        x[i] &= 255;
-    }
-    FOR (i, 0, 32) {
-        x[i] -= carry * L[i];
-    }
-    FOR (i, 0, 32) {
-        x[i+1] += x[i] >> 8;
-        r[i  ]  = x[i] & 255;
+        p[i+8] = (u32)carry;
     }
 }
 
-// Reduces a 64-byte hash modulo L (little endian)
+static int is_above_l(const u32 x[8])
+{
+    // We work with L directly, in a 2's complement encoding
+    // (-L == ~L + 1)
+    u64 carry = 1;
+    FOR (i, 0, 8) {
+        carry += (u64)x[i] + ~L[i];
+        carry >>= 32;
+    }
+    return carry;
+}
+
+// Final reduction modulo L, by conditionally removing L.
+// if x < l     , then r = x
+// if l <= x 2*l, then r = x-l
+// otherwise the result will be wrong
+static void remove_l(u32 r[8], const u32 x[8])
+{
+    u64 carry = is_above_l(x);
+    u32 mask  = ~(u32)carry + 1; // carry == 0 or 1
+    FOR (i, 0, 8) {
+        carry += (u64)x[i] + (~L[i] & mask);
+        r[i]   = (u32)carry;
+        carry >>= 32;
+    }
+}
+
+// Full reduction modulo L (Barrett reduction)
+static void mod_l(u8 reduced[32], const u32 x[16])
+{
+    static const u32 r[9] = {0x0a2c131b,0xed9ce5a3,0x086329a7,0x2106215d,
+                             0xffffffeb,0xffffffff,0xffffffff,0xffffffff,0xf,};
+    // xr = x * r
+    u32 xr[25] = {0};
+    FOR (i, 0, 9) {
+        u64 carry = 0;
+        FOR (j, 0, 16) {
+            carry  += xr[i+j] + (u64)r[i] * x[j];
+            xr[i+j] = (u32)carry;
+            carry >>= 32;
+        }
+        xr[i+16] = (u32)carry;
+    }
+    // xr = floor(xr / 2^512) * L
+    // Since the result is guaranteed to be below 2*L,
+    // it is enough to only compute the first 256 bits.
+    // The division is performed by saying xr[i+16]. (16 * 32 = 512)
+    ZERO(xr, 8);
+    FOR (i, 0, 8) {
+        u64 carry = 0;
+        FOR (j, 0, 8-i) {
+            carry   += xr[i+j] + (u64)xr[i+16] * L[j];
+            xr[i+j] = (u32)carry;
+            carry >>= 32;
+        }
+    }
+    // xr = x - xr
+    u64 carry = 1;
+    FOR (i, 0, 8) {
+        carry  += (u64)x[i] + ~xr[i];
+        xr[i]   = (u32)carry;
+        carry >>= 32;
+    }
+    // Final reduction modulo L (conditional subtraction)
+    remove_l(xr, xr);
+    store32_le_buf(reduced, xr, 8);
+
+    WIPE_BUFFER(xr);
+}
+
 static void reduce(u8 r[64])
 {
-    i64 x[64];
-    COPY(x, r, 64);
-    modL(r, x);
+    u32 x[16];
+    load32_le_buf(x, r, 16);
+    mod_l(r, x);
     WIPE_BUFFER(x);
 }
 
 // r = (a * b) + c
 static void mul_add(u8 r[32], const u8 a[32], const u8 b[32], const u8 c[32])
 {
-    i64 s[64];
-    FOR (i, 0, 32) {
-        s[i] = (i64)(u64)c[i];  // preserve unsigned
-    }
-    ZERO(s + 32, 32);
-    FOR (i,  0, 32) {
-        FOR (j, 0, 32) {
-            s[i+j] += a[i] * (u64)b[j];
-        }
-    }
-    modL(r, s);
-    WIPE_BUFFER(s);
-}
-
-// Variable time! a must not be secret!
-static int is_above_L(const u8 a[32])
-{
-    for (int i = 31; i >= 0; i--) {
-        if (a[i] > L[i]) { return 1; }
-        if (a[i] < L[i]) { return 0; }
-    }
-    return 1;
+    u32 A[8];  load32_le_buf(A, a, 8);
+    u32 B[8];  load32_le_buf(B, b, 8);
+    u32 p[16];
+    load32_le_buf(p, c, 8);
+    ZERO(p + 8, 8);
+    multiply(p, A, B);
+    mod_l(r, p);
+    WIPE_BUFFER(p);
+    WIPE_BUFFER(A);
+    WIPE_BUFFER(B);
 }
 
 ///////////////
@@ -2075,9 +2108,11 @@ static void ge_double_scalarmult_vartime(ge *P, const u8 p[32], const u8 b[32])
 // => Use only to *check* signatures.
 static int ge_r_check(u8 R_check[32], u8 s[32], u8 h_ram[32], u8 pk[32])
 {
-    ge A; // not secret, not wiped
+    ge  A;      // not secret, not wiped
+    u32 s32[8]; // not secret, not wiped
+    load32_le_buf(s32, s, 8);
     if (ge_frombytes_vartime(&A, pk) ||         // A = pk
-        is_above_L(s)) {                        // prevent s malleability
+        is_above_l(s32)) {                      // prevent s malleability
         return -1;
     }
     fe_neg(A.X, A.X);
@@ -2088,157 +2123,173 @@ static int ge_r_check(u8 R_check[32], u8 s[32], u8 h_ram[32], u8 pk[32])
 }
 
 // 5-bit signed comb in cached format (Niels coordinates, Z=1)
-static const ge_precomp b_comb[16] = {
-    {{2615675,9989699,17617367,-13953520,-8802803,
-      1447286,-8909978,-270892,-12199203,-11617247,},
-     {8873912,14981221,13714139,6923085,25481101,
-      4243739,4646647,-203847,9015725,-16205935,},
-     {-18494317,2686822,18449263,-13905325,5966562,
-      -3368714,2738304,-8583315,15987143,12180258,},},
-    {{-1271192,4785266,-29856067,-6036322,-10435381,
-      15493337,20321440,-6036064,15902131,13420909,},
-     {-1827892,15407265,2351140,-11810728,28403158,
-      -1487103,-15057287,-4656433,-3780118,-1145998,},
-     {-33336513,-13705917,-18473364,-5039204,-4268481,
-      -4136039,-8192211,-2935105,-19354402,5995895,},},
-    {{-26170888,-12891603,9568996,-6197816,26424622,
-      16308973,-4518568,-3771275,-15522557,3991142,},
-     {-30623162,-11845055,-11327147,-16008347,17564978,
-      -1449578,-20580262,14113978,29643661,15580734,},
-     {-19753139,-1729018,21880604,13471713,28315373,
-      -8530159,-17492688,11730577,-8790216,3942124,},},
-    {{-25875044,1958396,19442242,-9809943,-26099408,
-      -18589,-30794750,-14100910,4971028,-10535388,},
-     {-15109423,13348938,-14756006,14132355,30481360,
-      1830723,-240510,9371801,-13907882,8024264,},
-     {17278020,3905045,29577748,11151940,18451761,
-      -6801382,31480073,-13819665,26308905,10868496,},},
-    {{-13896937,-7357727,-12131124,617289,-33188817,
-      10080542,6402555,10779157,1176712,2472642,},
-     {25119567,5628696,10185251,-9279452,683770,
-      -14523112,-7982879,-16450545,1431333,-13253541,},
-     {26937294,3313561,28601532,-3497112,-22814130,
-      11073654,8956359,-16757370,13465868,16623983,},},
-    {{71503,12662254,-17008072,-8370006,23408384,
-      -12897959,32287612,11241906,-16724175,15336924,},
-     {-8390493,1276691,19008763,-12736675,-9249429,
-      -12526388,17434195,-13761261,18962694,-1227728,},
-     {-5468054,6059101,-31275300,2469124,26532937,
-      8152142,6423741,-11427054,-15537747,-10938247,},},
-    {{27397666,4059848,23573959,8868915,-10602416,
-      -10456346,-22812831,-9666299,31810345,-2695469,},
-     {26361856,-12366343,8941415,15163068,7069802,
-      -7240693,-18656349,8167008,31106064,-1670658,},
-     {-11303505,-9659620,-12354748,-9331434,19501116,
-      -9146390,-841918,-5315657,8903828,8839982,},},
-    {{-3418193,-694531,2320482,-11850408,-1981947,
-      -9606132,23743894,3933038,-25004889,-4478918,},
-     {-5677136,-11012483,-1246680,-6422709,14772010,
-      1829629,-11724154,-15914279,-18177362,1301444,},
-     {16603354,-215859,1591180,3775832,-705596,
-      -13913449,26574704,14963118,19649719,6562441,},},
-    {{-4448372,5537982,-4805580,14016777,15544316,
-      16039459,-7143453,-8003716,-21904564,8443777,},
-     {937094,12383516,-22597284,7580462,-18767748,
-      13813292,-2323566,13503298,11510849,-10561992,},
-     {33188866,-12232360,-24929148,-6133828,21818432,
-      11040754,-3041582,-3524558,-29364727,-10264096,},},
-    {{32495180,15749868,2195406,-15542321,-3213890,
-      -4030779,-2915317,12751449,-1872493,11926798,},
-     {28028043,14715827,-6558532,-1773240,27563607,
-      -9374554,3201863,8865591,-16953001,7659464,},
-     {-20704194,-12560423,-1235774,-785473,13240395,
-      4831780,-472624,-3796899,25480903,-15422283,},},
-    {{26779741,12553580,-24344000,-4071926,-19447556,
-      -13464636,21989468,7826656,-17344881,10055954,},
-     {13628467,5701368,4674031,11935670,11461401,
-      10699118,31846435,-114971,-8269924,-14777505,},
-     {-2204347,-16313180,-21388048,7520851,-8697745,
-      -14460961,20894017,12210317,-475249,-2319102,},},
-    {{5848288,-1639207,-10452929,-11760637,6484174,
-      -5895268,-11561603,587105,-19220796,14378222,},
-     {-22124018,-12859127,11966893,1617732,30972446,
-      -14350095,-21822286,8369862,-29443219,-15378798,},
-     {-16407882,4940236,-21194947,10781753,22248400,
-      14425368,14866511,-7552907,12148703,-7885797,},},
-    {{32050187,12536702,9206308,-10016828,-13333241,
-      -4276403,-24225594,14562479,-31803624,-9967812,},
-     {290131,-471434,8840522,-2654851,25963762,
-      -11578288,-7227978,13847103,30641797,6003514,},
-     {16376744,15908865,-30663553,4663134,-30882819,
-      -10105163,19294784,-10800440,-33259252,2563437,},},
-    {{23536033,-6219361,199701,4574817,30045793,
-      7163081,-2244033,883497,10960746,-14779481,},
-     {-23547482,-11475166,-11913550,9374455,22813401,
-      -5707910,26635288,9199956,20574690,2061147,},
-     {30208741,11594088,-15145888,15073872,5279309,
-      -9651774,8273234,4796404,-31270809,-13316433,},},
-    {{-8143354,-11558749,15772067,14293390,5914956,
-      -16702904,-7410985,7536196,6155087,16571424,},
-     {9715324,7036821,-17981446,-11505533,26555178,
-      -3571571,5697062,-14128022,2795223,9694380,},
-     {-17802574,14455251,27149077,-7832700,-29163160,
-      -7246767,17498491,-4216079,31788733,-14027536,},},
-    {{6211591,-11166015,24568352,2768318,-10822221,
-      11922793,33211827,3852290,-13160369,-8855385,},
-     {14864569,-6319076,-3080,-8151104,4994948,
-      -1572144,-41927,9269803,13881712,-13439497,},
-     {-25233439,-9389070,-6618212,-3268087,-521386,
-      -7350198,21035059,-14970947,25910190,11122681,},},
+static const ge_precomp b_comb_low[8] = {
+    {{-6816601,-2324159,-22559413,124364,18015490,
+      8373481,19993724,1979872,-18549925,9085059,},
+     {10306321,403248,14839893,9633706,8463310,
+      -8354981,-14305673,14668847,26301366,2818560,},
+     {-22701500,-3210264,-13831292,-2927732,-16326337,
+      -14016360,12940910,177905,12165515,-2397893,},},
+    {{-12282262,-7022066,9920413,-3064358,-32147467,
+      2927790,22392436,-14852487,2719975,16402117,},
+     {-7236961,-4729776,2685954,-6525055,-24242706,
+      -15940211,-6238521,14082855,10047669,12228189,},
+     {-30495588,-12893761,-11161261,3539405,-11502464,
+      16491580,-27286798,-15030530,-7272871,-15934455,},},
+    {{17650926,582297,-860412,-187745,-12072900,
+      -10683391,-20352381,15557840,-31072141,-5019061,},
+     {-6283632,-2259834,-4674247,-4598977,-4089240,
+      12435688,-31278303,1060251,6256175,10480726,},
+     {-13871026,2026300,-21928428,-2741605,-2406664,
+      -8034988,7355518,15733500,-23379862,7489131,},},
+    {{6883359,695140,23196907,9644202,-33430614,
+      11354760,-20134606,6388313,-8263585,-8491918,},
+     {-7716174,-13605463,-13646110,14757414,-19430591,
+      -14967316,10359532,-11059670,-21935259,12082603,},
+     {-11253345,-15943946,10046784,5414629,24840771,
+      8086951,-6694742,9868723,15842692,-16224787,},},
+    {{9639399,11810955,-24007778,-9320054,3912937,
+      -9856959,996125,-8727907,-8919186,-14097242,},
+     {7248867,14468564,25228636,-8795035,14346339,
+      8224790,6388427,-7181107,6468218,-8720783,},
+     {15513115,15439095,7342322,-10157390,18005294,
+      -7265713,2186239,4884640,10826567,7135781,},},
+    {{-14204238,5297536,-5862318,-6004934,28095835,
+      4236101,-14203318,1958636,-16816875,3837147,},
+     {-5511166,-13176782,-29588215,12339465,15325758,
+      -15945770,-8813185,11075932,-19608050,-3776283,},
+     {11728032,9603156,-4637821,-5304487,-7827751,
+      2724948,31236191,-16760175,-7268616,14799772,},},
+    {{-28842672,4840636,-12047946,-9101456,-1445464,
+      381905,-30977094,-16523389,1290540,12798615,},
+     {27246947,-10320914,14792098,-14518944,5302070,
+      -8746152,-3403974,-4149637,-27061213,10749585,},
+     {25572375,-6270368,-15353037,16037944,1146292,
+      32198,23487090,9585613,24714571,-1418265,},},
+    {{19844825,282124,-17583147,11004019,-32004269,
+      -2716035,6105106,-1711007,-21010044,14338445,},
+     {8027505,8191102,-18504907,-12335737,25173494,
+      -5923905,15446145,7483684,-30440441,10009108,},
+     {-14134701,-4174411,10246585,-14677495,33553567,
+      -14012935,23366126,15080531,-7969992,7663473,},},
 };
 
+static const ge_precomp b_comb_high[8] = {
+    {{33055887,-4431773,-521787,6654165,951411,
+      -6266464,-5158124,6995613,-5397442,-6985227,},
+     {4014062,6967095,-11977872,3960002,8001989,
+      5130302,-2154812,-1899602,-31954493,-16173976,},
+     {16271757,-9212948,23792794,731486,-25808309,
+      -3546396,6964344,-4767590,10976593,10050757,},},
+    {{2533007,-4288439,-24467768,-12387405,-13450051,
+      14542280,12876301,13893535,15067764,8594792,},
+     {20073501,-11623621,3165391,-13119866,13188608,
+      -11540496,-10751437,-13482671,29588810,2197295,},
+     {-1084082,11831693,6031797,14062724,14748428,
+      -8159962,-20721760,11742548,31368706,13161200,},},
+    {{2050412,-6457589,15321215,5273360,25484180,
+      124590,-18187548,-7097255,-6691621,-14604792,},
+     {9938196,2162889,-6158074,-1711248,4278932,
+      -2598531,-22865792,-7168500,-24323168,11746309,},
+     {-22691768,-14268164,5965485,9383325,20443693,
+      5854192,28250679,-1381811,-10837134,13717818,},},
+    {{-8495530,16382250,9548884,-4971523,-4491811,
+      -3902147,6182256,-12832479,26628081,10395408,},
+     {27329048,-15853735,7715764,8717446,-9215518,
+      -14633480,28982250,-5668414,4227628,242148,},
+     {-13279943,-7986904,-7100016,8764468,-27276630,
+      3096719,29678419,-9141299,3906709,11265498,},},
+    {{11918285,15686328,-17757323,-11217300,-27548967,
+      4853165,-27168827,6807359,6871949,-1075745,},
+     {-29002610,13984323,-27111812,-2713442,28107359,
+      -13266203,6155126,15104658,3538727,-7513788,},
+     {14103158,11233913,-33165269,9279850,31014152,
+      4335090,-1827936,4590951,13960841,12787712,},},
+    {{1469134,-16738009,33411928,13942824,8092558,
+      -8778224,-11165065,1437842,22521552,-2792954,},
+     {31352705,-4807352,-25327300,3962447,12541566,
+      -9399651,-27425693,7964818,-23829869,5541287,},
+     {-25732021,-6864887,23848984,3039395,-9147354,
+      6022816,-27421653,10590137,25309915,-1584678,},},
+    {{-22951376,5048948,31139401,-190316,-19542447,
+      -626310,-17486305,-16511925,-18851313,-12985140,},
+     {-9684890,14681754,30487568,7717771,-10829709,
+      9630497,30290549,-10531496,-27798994,-13812825,},
+     {5827835,16097107,-24501327,12094619,7413972,
+      11447087,28057551,-1793987,-14056981,4359312,},},
+    {{26323183,2342588,-21887793,-1623758,-6062284,
+      2107090,-28724907,9036464,-19618351,-13055189,},
+     {-29697200,14829398,-4596333,14220089,-30022969,
+      2955645,12094100,-13693652,-5941445,7047569,},
+     {-3201977,14413268,-12058324,-16417589,-9035655,
+      -7224648,9258160,1399236,30397584,-5684634,},},
+};
+
+static void lookup_add(ge *p, ge_precomp *tmp_c, fe tmp_a, fe tmp_b,
+                       const ge_precomp comb[8], const u8 scalar[32], int i)
+{
+    u8 teeth = (u8)((scalar_bit(scalar, i)          ) +
+                    (scalar_bit(scalar, i + 32) << 1) +
+                    (scalar_bit(scalar, i + 64) << 2) +
+                    (scalar_bit(scalar, i + 96) << 3));
+    u8 high  = teeth >> 3;
+    u8 index = (teeth ^ (high - 1)) & 7;
+    FOR (j, 0, 8) {
+        i32 select = 1 & (((j ^ index) - 1) >> 8);
+        fe_ccopy(tmp_c->Yp, comb[j].Yp, select);
+        fe_ccopy(tmp_c->Ym, comb[j].Ym, select);
+        fe_ccopy(tmp_c->T2, comb[j].T2, select);
+    }
+    fe_neg(tmp_a, tmp_c->T2);
+    fe_cswap(tmp_c->T2, tmp_a    , high ^ 1);
+    fe_cswap(tmp_c->Yp, tmp_c->Ym, high ^ 1);
+    ge_madd(p, p, tmp_c, tmp_a, tmp_b);
+}
 
 // p = [scalar]B, where B is the base point
 static void ge_scalarmult_base(ge *p, const u8 scalar[32])
 {
-    // 5-bits signed comb, from Mike Hamburg's
+    // twin 4-bits signed combs, from Mike Hamburg's
     // Fast and compact elliptic-curve cryptography (2012)
     // 1 / 2 modulo L
     static const u8 half_mod_L[32] = {
-        0xf7, 0xe9, 0x7a, 0x2e, 0x8d, 0x31, 0x09, 0x2c, 0x6b, 0xce, 0x7b, 0x51,
-        0xef, 0x7c, 0x6f, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, };
-    // (2^255 - 1) / 2 modulo L
+        247,233,122,46,141,49,9,44,107,206,123,81,239,124,111,10,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8, };
+    // (2^256 - 1) / 2 modulo L
     static const u8 half_ones[32] = {
-        0x42, 0x9a, 0xa3, 0xba, 0x23, 0xa5, 0xbf, 0xcb, 0x11, 0x5b, 0x9d, 0xc5,
-        0x74, 0x95, 0xf3, 0xb6, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x07, };
+        142,74,204,70,186,24,118,107,184,231,190,57,250,173,119,99,
+        255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,7, };
+
     // All bits set form: 1 means 1, 0 means -1
     u8 s_scalar[32];
     mul_add(s_scalar, scalar, half_mod_L, half_ones);
 
     // Double and add ladder
-    fe a, n2; // temporaries for addition
-    ge dbl;   // temporary for doubling
-    ge_precomp comb;
+    fe tmp_a, tmp_b;  // temporaries for addition
+    ge_precomp tmp_c; // temporary for comb lookup
+    ge tmp_d;         // temporary for doubling
+    fe_1(tmp_c.Yp);
+    fe_1(tmp_c.Ym);
+    fe_0(tmp_c.T2);
+
+    // Save a double on the first iteration
     ge_zero(p);
-    for (int i = 50; i >= 0; i--) {
-        if (i < 50) {
-            ge_double(p, p, &dbl);
-        }
-        fe_1(comb.Yp);
-        fe_1(comb.Ym);
-        fe_0(comb.T2);
-        u8 teeth = (u8)((scalar_bit(s_scalar, i)           ) +
-                        (scalar_bit(s_scalar, i +  51) << 1) +
-                        (scalar_bit(s_scalar, i + 102) << 2) +
-                        (scalar_bit(s_scalar, i + 153) << 3) +
-                        (scalar_bit(s_scalar, i + 204) << 4));
-        u8 high  = teeth >> 4;
-        u8 index = (teeth ^ (high - 1)) & 15;
-        FOR (j, 0, 16) {
-            i32 select = 1 & (((j ^ index) - 1) >> 8);
-            fe_ccopy(comb.Yp, b_comb[j].Yp, select);
-            fe_ccopy(comb.Ym, b_comb[j].Ym, select);
-            fe_ccopy(comb.T2, b_comb[j].T2, select);
-        }
-        fe_neg(n2, comb.T2);
-        fe_cswap(comb.T2, n2     , high);
-        fe_cswap(comb.Yp, comb.Ym, high);
-        ge_msub(p, p, &comb, a, n2); // reuse n2 as temporary
+    lookup_add(p, &tmp_c, tmp_a, tmp_b, b_comb_low , s_scalar, 31);
+    lookup_add(p, &tmp_c, tmp_a, tmp_b, b_comb_high, s_scalar, 31+128);
+    // Regular double & add for the rest
+    for (int i = 30; i >= 0; i--) {
+        ge_double(p, p, &tmp_d);
+        lookup_add(p, &tmp_c, tmp_a, tmp_b, b_comb_low , s_scalar, i);
+        lookup_add(p, &tmp_c, tmp_a, tmp_b, b_comb_high, s_scalar, i+128);
     }
-    WIPE_CTX(&dbl); WIPE_CTX(&comb);
-    WIPE_BUFFER(a); WIPE_BUFFER(n2);
+    // Note: we could save one addition at the end if we assumed the
+    // scalar fit in 252 bit.  Which it does in practice if it is
+    // selected at random.  However, non-random, non-hashed scalars
+    // *can* overflow 252 bits in practice.  Better account for that
+    // than leaving that kind of subtle corner case.
+
+    WIPE_BUFFER(tmp_a);  WIPE_CTX(&tmp_d);
+    WIPE_BUFFER(tmp_b);  WIPE_CTX(&tmp_c);
     WIPE_BUFFER(s_scalar);
 }
 
@@ -2475,12 +2526,12 @@ void crypto_from_eddsa_public(u8 x25519[32], const u8 eddsa[32])
 //   s + L * (x%8) < 2^256
 static void add_xl(u8 s[32], u8 x)
 {
-    u32 mod8  = x & 7;
-    u32 carry = 0;
-    FOR (i , 0, 32) {
-        carry = carry + s[i] + L[i] * mod8;
-        s[i]  = (u8)carry;
-        carry >>= 8;
+    u64 mod8  = x & 7;
+    u64 carry = 0;
+    FOR (i , 0, 8) {
+        carry = carry + load32_le(s + 4*i) + L[i] * mod8;
+        store32_le(s + 4*i, (u32)carry);
+        carry >>= 32;
     }
 }
 
@@ -2795,19 +2846,6 @@ void crypto_key_exchange(u8       shared_key[32],
 ///////////////////////
 /// Scalar division ///
 ///////////////////////
-static void multiply(u32 p[16], const u32 a[8], const u32 b[8])
-{
-    ZERO(p, 16);
-    FOR (i, 0, 8) {
-        u64 carry = 0;
-        FOR (j, 0, 8) {
-            carry  += p[i+j] + (u64)a[i] * b[j];
-            p[i+j]  = (u32)carry;
-            carry >>= 32;
-        }
-        p[i+8] = (u32)carry;
-    }
-}
 
 // Montgomery reduction.
 // Divides x by (2^256), and reduces the result modulo L
@@ -2838,7 +2876,7 @@ static void redc(u32 u[8], u32 x[16])
             carry >>= 32;
         }
     }
-    u32 t[16];
+    u32 t[16] = {0};
     multiply(t, s, l);
 
     // t = t + x
@@ -2854,17 +2892,8 @@ static void redc(u32 u[8], u32 x[16])
     // So a constant time conditional subtraction is enough
     // We work with L directly, in a 2's complement encoding
     // (-L == ~L + 1)
-    carry = 1;
-    FOR (i, 0, 8) {
-        carry  += (u64)t[i+8] + ~l[i];
-        carry >>= 32;
-    }
-    u32 mask = ~(u32)carry + 1; // carry == 0 or 1
-    FOR (i, 0, 8) {
-        carry  += (u64)t[i+8] + (~l[i] & mask);
-        u[i]    = (u32)carry;
-        carry >>= 32;
-    }
+    remove_l(u, t+8);
+
     WIPE_BUFFER(s);
     WIPE_BUFFER(t);
 }
@@ -2888,19 +2917,21 @@ void crypto_x25519_inverse(u8 blind_salt [32], const u8 private_key[32],
     // m_scl = scalar * 2^256 (modulo L)
     u32 m_scl[8];
     {
-        i64 tmp[64];
-        ZERO(tmp, 32);
-        COPY(tmp+32, scalar, 32);
-        modL(scalar, tmp);
+        u32 tmp[16];
+        ZERO(tmp, 8);
+        load32_le_buf(tmp+8, scalar, 8);
+        mod_l(scalar, tmp);
         load32_le_buf(m_scl, scalar, 8);
         WIPE_BUFFER(tmp); // Wipe ASAP to save stack space
     }
 
     u32 product[16];
     for (int i = 252; i >= 0; i--) {
+        ZERO(product, 16);
         multiply(product, m_inv, m_inv);
         redc(m_inv, product);
         if (scalar_bit(Lm2, i)) {
+            ZERO(product, 16);
             multiply(product, m_inv, m_scl);
             redc(m_inv, product);
         }

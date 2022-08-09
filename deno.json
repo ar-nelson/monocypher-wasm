@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "lint": {
+    "files": {
+      "exclude": ["build/", "buildNpmTest/", "monocypher.min.js"]
+    }
+  },
+  "fmt": {
+    "files": {
+      "exclude": ["build/", "buildNpmTest/", "monocypher.min.js"]
+    },
+    "options": {
+      "lineWidth": 100,
+      "singleQuote": true
+    }
+  },
+  "test": {
+    "files": {
+      "exclude": ["build/", "buildNpmTest/"]
+    }
+  }
+}

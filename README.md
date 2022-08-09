@@ -1,41 +1,37 @@
 # Monocypher WebAssembly Port
 
-    $ npm install monocypher-wasm
+This is a Typescript+WASM port of [Monocypher][monocypher], a new cryptography library similar to
+libsodium. It consists of a WASM-compiled Monocypher library and a Typescript wrapper for functions
+exported by this library.
 
-This is a JS+WASM port of [Monocypher][monocypher], a new cryptography library
-similar to libsodium. It consists of a WASM-compiled Monocypher library and a JS
-wrapper for functions exported by this library.
-
-Most of Monocypher's functions are available, with the exception of the
-"incremental" functions that require counters or context pointers. The APIs of
-these functions have been changed to remove most length arguments, and to create
-and return output buffers directly rather than taking them as arguments.
-
-`monocypher-wasm` also provides a full Typescript definition file for its API.
+Most of Monocypher's functions are available, with the exception of the "incremental" functions that
+require counters or context pointers. The APIs of these functions have been changed to remove most
+length arguments, and to create and return output buffers directly rather than taking them as
+arguments.
 
 ## Usage
 
-Because WebAssembly code must be loaded asynchronously, `monocypher-wasm`
-exports a `ready` promise that must resolve before any Monocypher functions can
-be called.
+Monocypher can be used from Node, Deno, and the browser:
 
-```js
-const Monocypher = require('monocypher-wasm');
-const { randomBytes } = require('crypto');
+```javascript
+// Node
+const { crypto_blake2b } = require('monocypher-wasm');
 
-await Monocypher.ready;
+// Deno
+import { crypto_blake2b } from 'https://deno.land/x/monocypher@v3.1.2-4/mod.ts';
 
-const sk = randomBytes(Monocypher.KEY_SIZE);
-const pk = Monocypher.crypto_sign_public_key(sk);
+// Browser (only 24KB gzipped!)
+import { crypto_blake2b } from 'https://raw.githubusercontent.com/ar-nelson/monocypher-wasm/v3.1.2-4/monocypher.min.js';
 ```
+
+Unlike previous versions of this package, the API is synchronous, and no `ready` promise is needed.
+`ready` is still included for backward compatibility.
 
 ## API
 
 > **Note:** An `InputBuffer` is either a `Uint8Array`, an array of numbers, or `null`.
 
 ```typescript
-ready: Promise<void>
-
 crypto_blake2b(message: InputBuffer): Uint8Array
 crypto_blake2b_general(hash_size: number, key: InputBuffer, message: InputBuffer): Uint8Array
 
@@ -90,22 +86,24 @@ CHACHA20_NONCE_BYTES: 8
 
 ## Compilation and Testing
 
-- `yarn build` or `npm run build` builds `monocypher.wasm` and `monocypher.js`
-from `monocypher.c` and `monocypher.h`.
+The repo contains the Deno (`mod.ts`) and browser (`monocypher.min.js`) modules. The Node module
+must be built with `dnt`.
 
-- `yarn test` or `npm test` runs a port of some of Monocypher's unit tests. It
-uses the test vectors from Monocypher's release tarball, which have been
-compiled into `test-vectors.json.gz`.
+The build process is defined in a GNU Makefile.
 
-- `yarn build-from-scratch` or `npm run build-from-scratch` fetches the latest
-Monocypher tarball; extracts `monocypher.c`, `monocypher.h`, and `vectors.h`
-from it; and rebuilds all files that depend on them. Use this if you don't trust
-my copy of Monocypher's source.
+`make` will rebuild everything, including the Node module, and run tests in both Deno and Node. It
+will even redownload the Monocypher sources from [monocypher.org][monocypher].
+
+`make` requires `clang`, `lld`, `deno`, `npm`, `esbuild`, `curl`, and a Unix environment.
 
 ## License
 
-Like Monocypher itself, this project is public domain, via the [CC0][cc0]
-license.
+Like Monocypher itself, this project is public domain, via the [CC0][cc0] license.
+
+This project contains code from [`wingo/walloc`][walloc], which is available under
+[a permissive MIT-style license][walloc-license].
 
 [monocypher]: https://monocypher.org/
 [cc0]: https://creativecommons.org/share-your-work/public-domain/cc0/
+[walloc]: https://github.com/wingo/walloc
+[walloc-license]: https://github.com/wingo/walloc/blob/a93409f5ebd49c875514c5fee30d3b151f7b0882/LICENSE.md
